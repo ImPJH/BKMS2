@@ -17,9 +17,11 @@ if __name__ == "__main__":
     db = DB(
         path=config["folder_path"],
         embed_model=config["embed_model"],
-        milvus_uri= config["milvus_uri"]
+        milvus_uri= config["milvus_uri"],
+        dir_list=config["directories"]
     )
-    db.process_documents()
+    # db.process_documents()
+    db.process_multiple_directories()
     vectorstore = db.get_vectorstore()
 
     llm_model = LLMModel(config_path=config_path)
