@@ -1,5 +1,5 @@
 import os
-from typing import Iterator, Union
+from typing import Iterator, Union,Optional,List
 from tempfile import TemporaryDirectory
 
 from langchain_core.document_loaders import BaseLoader
@@ -22,17 +22,22 @@ class DoclingPDFLoader(BaseLoader):
             yield LCDocument(page_content=text)
 
 class DB:
-    def __init__(self, path: str, embed_model: str,milvus_uri:str):
+    def __init__(self, path: str, embed_model: str, milvus_uri: str, dir_list: Optional[List[str]] = None):
         """
+        Initialize the class with paths and embedding model details.
+
         Args:
             path (str): Either a single PDF file path or a folder path containing multiple PDFs.
             embed_model (str): HuggingFace embedding model name.
+            milvus_uri (str): URI for the Milvus vector database.
+            dir_list (Optional[List[str]]): A list of directory paths, or None if no directories are provided.
         """
         self.path = path
         self.embed_model = embed_model
-        self.milvus_uri = milvus_uri 
+        self.milvus_uri = milvus_uri
         self.vectorstore = None
-        self.embedding= HuggingFaceEmbeddings(model_name=self.embed_model)
+        self.embedding = HuggingFaceEmbeddings(model_name=self.embed_model)
+        self.dir_list = dir_list or None
 
     def process_documents(self):
         # Check if the Milvus database directory exists
@@ -45,6 +50,63 @@ class DB:
 
         # Load documents
         loader = DoclingPDFLoader(file_path=self._get_files(self.path))
+        documents = list(loader.lazy_load())
+
+        # Split documents into chunks
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000,
+            chunk_overlap=200,
+        )
+        splits = []
+        for doc in documents:
+            # Wrap each split in an LCDocument with metadata
+            chunks = text_splitter.split_text(doc.page_content)
+            splits.extend(
+                [LCDocument(page_content=chunk, metadata=doc.metadata) for chunk in chunks]
+            )
+
+        # Store in Milvus vector database
+        self.vectorstore = Milvus.from_documents(
+            splits,
+            self.embedding,
+            connection_args={"uri": f"{self.milvus_uri}"},
+            drop_old=True,
+        )
+        print("Vectorstore created and stored.")
+        
+    def process_multiple_directories(self):
+        """
+        Process all files from the provided directories and add them to the same vectorstore.
+
+        This method combines files from multiple directories (if specified in `self.dir_list`)
+        and processes them into a single Milvus vectorstore.
+
+        Returns:
+            None
+        """
+        if self.dir_list is None or len(self.dir_list) == 0:
+            raise ValueError("No directories specified in `dir_list` to process.")
+
+        # Check if the Milvus database directory exists
+        if os.path.exists(self.milvus_uri):
+            print("Loading existing vectorstore...")
+            self.vectorstore = self._load_existing_vectorstore()
+            return
+
+        print("Creating new vectorstore...")
+
+        # Collect files from all directories
+        all_files = []
+        for directory in self.dir_list:
+            all_files.extend(self._load_files_from_directories())
+
+        # Ensure all files are unique
+        all_files = list(set(all_files))
+
+        print(f"Total files to process: {len(all_files)}")
+
+        # Load documents
+        loader = DoclingPDFLoader(file_path=all_files)
         documents = list(loader.lazy_load())
 
         # Split documents into chunks
@@ -81,6 +143,26 @@ class DB:
             self.embedding,
             connection_args={"uri": f"{self.milvus_uri}"}
         )
+
+    def _load_files_from_directories(self) -> list[str]:
+        """
+        Read all files from the specified directories.
+
+        Args:
+            directories (list[str]): A list of folder paths to search for files.
+
+        Returns:
+            list[str]: A list of file paths found in the given directories.
+        """
+        
+        all_files = []
+        for directory in self.dir_list:
+            print(f"Loading files from {directory}")
+            for root, _, files in os.walk(directory):
+                for file in files:
+                    all_files.append(os.path.join(root, file))
+                    print(f"{file} added")
+        return all_files
 
     def _get_files(self, path: str) -> list[str]:
         """
