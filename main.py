@@ -6,13 +6,13 @@ from rag import RAGPipeline
 
 # Example usage
 if __name__ == "__main__":
-    import json
-
     # Load configuration
+    print("Reading configuration file...")
     config_path = "config.json"
     with open(config_path, "r") as config_file:
         config = json.load(config_file)
-
+    print("Done!")
+    
     # Initialize vectorstore and LLM
     db = DB(
         path=config["folder_path"],
