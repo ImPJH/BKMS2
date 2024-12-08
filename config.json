@@ -1,8 +1,8 @@
 {
-    "folder_path": "test/A15-10-15.pdf",
-    "milvus_uri": "tcp://127.0.0.1:19530",
+    "folder_path": "",
+    "milvus_uri": "",
     "embed_model": "BAAI/bge-small-en-v1.5",
-    "hf_api_key": "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",
+    "hf_api_key": "",
     "hf_llm_model_id": "meta-llama/Meta-Llama-3-8B-Instruct",
     
     "directories": ["test"]
