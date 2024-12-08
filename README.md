@@ -9,3 +9,6 @@ db.py: database + embedding
 model.py: load model with huggingface
 rag.py: run rag
 main.py: run this file to run rag
+
+# run UI
+streamlit run app.py

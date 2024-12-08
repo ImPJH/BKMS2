@@ -9,7 +9,17 @@ from langchain_huggingface.embeddings import HuggingFaceEmbeddings
 from langchain_milvus import Milvus
 from docling.document_converter import DocumentConverter
 
+import re
+# class DoclingPDFLoader(BaseLoader):
+#     def __init__(self, file_path: Union[str, list[str]]) -> None:
+#         self._file_paths = file_path if isinstance(file_path, list) else [file_path]
+#         self._converter = DocumentConverter()
 
+#     def lazy_load(self) -> Iterator[LCDocument]:
+#         for source in self._file_paths:
+#             dl_doc = self._converter.convert(source).document
+#             text = dl_doc.export_to_markdown()
+#             yield LCDocument(page_content=text)
 class DoclingPDFLoader(BaseLoader):
     def __init__(self, file_path: Union[str, list[str]]) -> None:
         self._file_paths = file_path if isinstance(file_path, list) else [file_path]
@@ -19,7 +29,20 @@ class DoclingPDFLoader(BaseLoader):
         for source in self._file_paths:
             dl_doc = self._converter.convert(source).document
             text = dl_doc.export_to_markdown()
-            yield LCDocument(page_content=text)
+
+            # 불필요한 텍스트 제거
+            clean_text = self.clean_text(text)
+            yield LCDocument(page_content=clean_text, metadata={"source": source})
+
+    @staticmethod
+    def clean_text(text: str) -> str:
+        # HTML 주석, 특수 문자, 불필요한 레이아웃 제거
+        import re
+        text = re.sub(r"<!--.*?-->", "", text)  # HTML 주석 제거
+        text = re.sub(r"[|]+", "", text)  # 파이프(|) 제거
+        text = re.sub(r"\s+", " ", text)  # 공백 정리
+        return text.strip()
+
 
 class DB:
     def __init__(self, path: str, embed_model: str, milvus_uri: str, dir_list: Optional[List[str]] = None):
@@ -59,6 +82,10 @@ class DB:
         )
         splits = []
         for doc in documents:
+            #ssg ; Extract phone_type from file name (e.g., 폴더 안에 'samsung.pdf' -> phone_type = 'samsung')
+            phone_type = os.path.basename(doc.metadata.get("source", "")).replace(".pdf", "").lower()
+            doc.metadata["phone_type"] = phone_type
+            print(f"process_documents: save phone type as {phone_type}")
             # Wrap each split in an LCDocument with metadata
             chunks = text_splitter.split_text(doc.page_content)
             splits.extend(
@@ -116,12 +143,15 @@ class DB:
         )
         splits = []
         for doc in documents:
+            #ssg; Extract phone_type from file name (e.g., 'samsung.pdf' -> phone_type = 'samsung')
+            phone_type = os.path.basename(doc.metadata.get("source", "")).replace(".pdf", "").lower()
+            print(f"process_multiple_directories: save phone type as {phone_type}")
+            doc.metadata["phone_type"] = phone_type
             # Wrap each split in an LCDocument with metadata
             chunks = text_splitter.split_text(doc.page_content)
             splits.extend(
                 [LCDocument(page_content=chunk, metadata=doc.metadata) for chunk in chunks]
             )
-
         # Store in Milvus vector database
         self.vectorstore = Milvus.from_documents(
             splits,
