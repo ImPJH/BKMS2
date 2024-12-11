@@ -6,9 +6,76 @@ from langchain_core.runnables import RunnablePassthrough
 from langchain_milvus import Milvus
 from model import LLMModel
 
+import json
+import numpy as np
+from langchain_huggingface.embeddings import HuggingFaceEmbeddings
+import asyncio
+
+
+def retrieve_cache(json_file):
+    try:
+        with open(json_file, "r") as file:
+            cache = json.load(file)
+    except FileNotFoundError:
+        cache = {"questions": [], "embeddings": [], "answers": [], "response_text": []}
+
+    return cache
+
+class semantic_cache:
+    def __init__(self, json_file="cache_file.json", thresold=0.95, max_response=100, eviction_policy="FIFO"):
+        self.json_file = json_file
+        self.cache = retrieve_cache(self.json_file)
+        self.thresold = thresold
+        self.max_response = max_response
+        self.eviction_policy = eviction_policy
+
+    def evict(self):
+        """Evicts an item from the cache based on the eviction policy."""
+        if self.eviction_policy and len(self.cache["embeddings"]) > self.max_response:
+            for _ in range((len(self.cache["embeddings"]) - self.max_response)):
+                if self.eviction_policy == "FIFO":
+                    self.cache["embeddings"].pop(0)
+                    self.cache["response_text"].pop(0)
+
+    def ask(self,emb_query,filters):
+        total_key = "None"
+        if filters:
+            for k, v in filters.items():
+                total_key += k + v
+
+        if total_key not in self.cache["embeddings"]:
+            self.cache["embeddings"][total_key] = []
+            self.cache["response_text"][total_key] = []
+            
+        np_cache = np.array(self.cache["embeddings"][total_key])
+        np_query = np.array(emb_query)
+        if len(np_cache) > 0:
+            cos_sims = np.dot(np_cache,np_query.T).T/(np.linalg.norm(np_cache,2,axis=1)*np.linalg.norm(np_query,2))
+
+            for i , sim in enumerate(cos_sims):
+                if sim >= self.thresold:
+                    return self.cache["response_text"][total_key][i]
+    
+        return None
+    
+    def store_cache(self):
+        with open(self.json_file, "w") as file:
+            json.dump(self.cache, file)
+    
+    def append_result(self,emb_query,res,filters):
+        total_key = "None"
+        if filters:
+            for k, v in filters.items():
+                total_key += k + v
+
+        self.cache["embeddings"][total_key].append(emb_query)
+        self.cache["response_text"][total_key].append(res)
+        self.evict()
+        self.store_cache()
+    
 
 class RAGPipeline:
-    def __init__(self, vectorstore, llm):
+    def __init__(self, vectorstore, llm, config_path):
         """
         Initializes the RAG pipeline.
 
@@ -18,6 +85,12 @@ class RAGPipeline:
         """
         self.vectorstore = vectorstore
         self.llm = llm
+
+        with open(config_path, "r") as config_file:
+            config = json.load(config_file)
+
+        self.embedding = HuggingFaceEmbeddings(model_name=config["embed_model"])
+        self.cache = semantic_cache(json_file="cache_file.json")
 
     @staticmethod
     def format_docs(docs: Iterable[LCDocument]) -> str:
@@ -141,6 +214,14 @@ class RAGPipeline:
             print(f"Applying filters: {filters}")
 
         # Execute pipeline
+        embedded_query = self.embedding.embed_query(query)
+        cache_response = self.cache.ask(embedded_query, filters)
+        if cache_response:
+            print("Segment cache used!")
+            return "You already asked this question! (This answer is attained by segment cache.)\n\n\n"+cache_response
+        
+
+
         response = pipeline.invoke(query)
 
         # Log filtered results (if debugging)
@@ -154,4 +235,5 @@ class RAGPipeline:
             for doc in filtered_results:
                 print(f"Metadata: {doc.metadata}")
 
+        self.cache.append_result(embedded_query,response,filters)
         return response
