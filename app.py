@@ -70,7 +70,7 @@ def main():
             st.sidebar.text("Initializing LLM...")
             llm = initialize_llm(config_path)
 
-            st.session_state["rag_pipeline"] = RAGPipeline(vectorstore=vectorstore, llm=llm)
+            st.session_state["rag_pipeline"] = RAGPipeline(vectorstore=vectorstore, llm=llm, config_path=config_path)
     # 세션 상태 초기화
     if "phone_type" not in st.session_state:
         st.session_state["phone_type"] = None  # 폰 종류 초기화
